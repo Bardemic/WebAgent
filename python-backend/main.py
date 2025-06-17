@@ -215,7 +215,7 @@ def patch_agent_methods(agent: CustomAgent):
 
 def get_llm(provider: str, model: str):
     """Get the appropriate LLM based on provider and model."""
-    if provider.lower() == "openai":
+    if provider.lower() == "openai" or True:
         return ChatOpenAI(
             model=model,
             api_key=os.getenv("OPENAI_API_KEY"),
