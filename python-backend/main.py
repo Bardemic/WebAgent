@@ -252,7 +252,7 @@ async def run_single_model_benchmark(session_identifier: str, model_info: Dict[s
         execution_time = int((time.time() - start_time) * 1000)
         
         # Extract and process the final result from the agent
-        final_result_text = result.action_results()[-2].extracted_content + result.action_results()[-1].extracted_content
+        final_result_text = [result.action_results()[-2].extracted_content, result.action_results()[-1].extracted_content]
         if final_result_text:
             if isinstance(final_result_text, str):
                 await emit_log(session_identifier, model_id, "success", f"🎯 Final Result: {final_result_text}")

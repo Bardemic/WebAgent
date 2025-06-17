@@ -160,6 +160,18 @@ class DatabaseService {
     if (error) throw error
   }
 
+  async updateBenchmarkResult(benchmarkId: string, success: boolean): Promise<void> {
+    const { error } = await this.supabase
+      .from('benchmarks')
+      .update({
+        success,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', benchmarkId)
+
+    if (error) throw error
+  }
+
   async updateSessionStatus(
     sessionId: string,
     status: SessionStatus,
@@ -226,7 +238,8 @@ class DatabaseService {
       error_message: benchmark.error_message,
       benchmark_id: benchmark.id,
       start_time: benchmark.start_time,
-      end_time: benchmark.end_time
+      end_time: benchmark.end_time,
+      final_result: benchmark.final_result
     }))
 
     const totalExecutionTime = modelResults.reduce((sum, result) => sum + result.execution_time_ms, 0)

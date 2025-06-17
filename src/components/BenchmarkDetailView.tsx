@@ -19,6 +19,30 @@ export function BenchmarkDetailView({ benchmark, onBack }: BenchmarkDetailViewPr
     'Processing tasks...'
   ])
 
+  const handleResult = (result: string, benchmarkId: string) => {
+    console.log(benchmarkId)
+    fetch(`/api/benchmark/${benchmarkId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ result })
+    })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Failed to update benchmark result')
+        }
+        return response.json()
+      })
+      .then(data => {
+        console.log('Benchmark result updated successfully:', data)
+        // Optionally refresh the benchmark data here
+      })
+      .catch(error => {
+        console.error('Error updating benchmark result:', error)
+      })
+  }
+
   const formatTimeAgo = (dateString: string) => {
     const date = new Date(dateString)
     const now = new Date()
@@ -114,8 +138,12 @@ export function BenchmarkDetailView({ benchmark, onBack }: BenchmarkDetailViewPr
                         benchmark {index + 1}
                       </h3>
                     </div>
-                    <div className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(model.status)}`}>
-                      {model.status}
+                    <div className={`px-2 py-1 rounded-full text-xs font-medium ${
+                      model.success ? 'bg-green-400' :
+                      model.success === false ? 'bg-red-400' :
+                      'bg-gray-400'
+                    }`}>
+                      {model.success ? 'Success' : model.success === false ? 'Failed' : 'In Progress'}
                     </div>
                   </div>
 
@@ -128,10 +156,16 @@ export function BenchmarkDetailView({ benchmark, onBack }: BenchmarkDetailViewPr
                   <div className="flex-1 bg-gray-50 rounded-lg p-4">
                     <div className="space-y-2">
                       <div className="text-xs text-gray-600">
-                        {model.success ? 
-                          '✅ Task completed successfully' : 
+                        {!model.final_result && 
                           '❌ Task failed to complete'
                         }
+                        {model.final_result && (
+                          <div 
+                            className="line-clamp-5 hover:line-clamp-none overflow-hidden cursor-pointer mt-1 transition-all duration-200" 
+                          >
+                            {model.final_result}
+                          </div>
+                        )}
                       </div>
                       <div className="text-xs text-gray-500">
                         Duration: {Math.round(model.execution_time_ms / 1000)}s
@@ -148,6 +182,14 @@ export function BenchmarkDetailView({ benchmark, onBack }: BenchmarkDetailViewPr
                       )}
                     </div>
                   </div>
+                  {model.success == null && <div className="flex justify-stretch space-x-2">
+                    <button onClick={() => handleResult('good', model?.benchmark_id || '')} className="bg-green-500 cursor-pointer flex-1 text-white px-4 py-2 rounded-md hover:bg-green-600">
+                      Good Result
+                    </button>
+                    <button onClick={() => handleResult('bad', model?.benchmark_id || '')} className="bg-red-500 cursor-pointer text-white flex-1 px-4 py-2 rounded-md hover:bg-red-600">
+                      Bad Result
+                    </button>
+                  </div>}
                 </div>
               ))}
             </div>
