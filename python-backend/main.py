@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from supabase import create_client, Client
-from browser_use import Agent
+from browser_use import Agent, BrowserSession
 import uuid
 import logging
 
@@ -134,7 +134,7 @@ class CustomAgent(Agent):
         
         try:
             # Initialize browser
-            await emit_log(self.session_id, "info", "🌐 Launching browser...")
+            await emit_log(self.session_id, "info", "🌐 Launching browser in headless mode...")
             
             # Set the session ID for the custom log handler
             custom_handler.set_session_id(self.session_id)
@@ -221,14 +221,6 @@ def get_llm(provider: str, model: str):
             api_key=os.getenv("OPENAI_API_KEY"),
             temperature=0
         )
-    elif provider.lower() == "anthropic":
-        return ChatAnthropic(
-            model=model,
-            api_key=os.getenv("ANTHROPIC_API_KEY"),
-            temperature=0
-        )
-    else:
-        raise ValueError(f"Unsupported LLM provider: {provider}")
 
 async def cleanup_session(session_id: str, delay: int = 60):
     """Clean up session after delay."""
@@ -276,10 +268,18 @@ async def run_benchmark_with_logs(request: BenchmarkStreamRequest):
         await emit_log(session_id, "info", f"🎯 Task: {task}")
         await emit_log(session_id, "info", f"🤖 Using {request.llm_provider} {request.model}")
         
+        # Create a headless browser session
+        browser_session = BrowserSession(
+            headless=True,
+            viewport={'width': 1280, 'height': 720},
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        )
+        
         agent = CustomAgent(
             session_id=session_id,
             task=task,
             llm=llm,
+            browser_session=browser_session,
             use_vision=True,
             save_conversation_path=f"logs/conversation_{session_id}.json",
             max_failures=3,
@@ -526,9 +526,17 @@ async def run_benchmark(request: BenchmarkRequest):
         # Create the BrowserUse agent with the specific task
         task = f"Go to {request.website_url} and {request.task_description}"
         
+        # Create a headless browser session
+        browser_session = BrowserSession(
+            headless=True,
+            viewport={'width': 1280, 'height': 720},
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        )
+        
         agent = Agent(
             task=task,
             llm=llm,
+            browser_session=browser_session,
             use_vision=True,  # Enable vision for better web understanding
             save_conversation_path=f"logs/conversation_{uuid.uuid4()}.json",
             max_failures=3,
