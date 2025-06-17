@@ -43,4 +43,6 @@ next-env.d.ts
 /python-backend/__pycache__/
 /python-backend/logs/
 
+venv/
+
 
