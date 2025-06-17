@@ -30,6 +30,9 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
   const [isRunning, setIsRunning] = useState(false)
   const [step, setStep] = useState<'url' | 'task' | 'running' | 'idle'>('idle')
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [llmProvider, setLlmProvider] = useState('openai')
+  const [model, setModel] = useState('gpt-4o')
+  const [showSettings, setShowSettings] = useState(false)
   
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const urlInputRef = useRef<HTMLInputElement>(null)
@@ -57,6 +60,10 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
     setStep('idle')
     setIsRunning(false)
     setSessionId(null)
+    
+    // Set the model info from the benchmark
+    setLlmProvider(benchmark.llm_provider || 'openai')
+    setModel(benchmark.model || 'gpt-4o')
 
     // Create a fresh message array for this benchmark only
     const benchmarkMessages: Message[] = []
@@ -66,6 +73,14 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
       id: `header_${benchmark.id}`,
       type: 'system',
       content: `Viewing benchmark from ${new Date(benchmark.created_at).toLocaleDateString()} at ${new Date(benchmark.created_at).toLocaleTimeString()}`,
+      timestamp: new Date(benchmark.created_at)
+    })
+
+    // Add model info message
+    benchmarkMessages.push({
+      id: `model_${benchmark.id}`,
+      type: 'system',
+      content: `Used model: ${benchmark.llm_provider || 'openai'} - ${benchmark.model || 'gpt-4o'}`,
       timestamp: new Date(benchmark.created_at)
     })
 
@@ -154,6 +169,35 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
     return newMessage
   }
 
+  const handleProviderChange = (provider: string) => {
+    setLlmProvider(provider)
+    if (provider === 'openai') {
+      setModel('gpt-4o')
+    } else if (provider === 'anthropic') {
+      setModel('claude-3-5-sonnet-20241022')
+    }
+  }
+
+  const getModelDisplayName = (provider: string, model: string) => {
+    if (provider === 'openai') {
+      switch (model) {
+        case 'gpt-4o': return 'GPT-4o'
+        case 'gpt-4o-mini': return 'GPT-4o Mini'
+        case 'gpt-4-turbo': return 'GPT-4 Turbo'
+        case 'gpt-3.5-turbo': return 'GPT-3.5 Turbo'
+        default: return model
+      }
+    } else if (provider === 'anthropic') {
+      switch (model) {
+        case 'claude-3-5-sonnet-20241022': return 'Claude 3.5 Sonnet'
+        case 'claude-3-haiku-20240307': return 'Claude 3 Haiku'
+        case 'claude-3-opus-20240229': return 'Claude 3 Opus'
+        default: return model
+      }
+    }
+    return model
+  }
+
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!websiteUrl.trim()) return
@@ -193,6 +237,12 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
       content: `Task: ${taskDescription.trim()}`
     })
 
+    // Add model information
+    addMessage({
+      type: 'system',
+      content: `Using ${getModelDisplayName(llmProvider, model)} for this test`
+    })
+
     addMessage({
       type: 'ai',
       content: 'Perfect! I\'ll start testing your website now. This may take a few moments...'
@@ -223,8 +273,8 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
           website_url: websiteUrl,
           task_description: taskDescription.trim(),
           user_id: user.id,
-          llm_provider: 'openai',
-          model: 'gpt-4o',
+          llm_provider: llmProvider,
+          model: model,
           session_id: newSessionId,
         }),
       })
@@ -315,8 +365,8 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
         errorMessage: data.error_message,
         screenshotUrl: data.screenshot_url,
         createdAt: data.created_at,
-        llmProvider: 'openai',
-        model: 'gpt-4o'
+        llmProvider: llmProvider,
+        model: model
       })
     } else {
       addMessage({
@@ -353,20 +403,102 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
 
   return (
     <div className="flex-1 flex flex-col h-full">
+      {/* Chat Header with Model Selection */}
+      <div className="bg-white border-b border-slate-200 px-6 py-4">
+        <div className="max-w-4xl mx-auto flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-2">
+              <div className="w-3 h-3 bg-green-400 rounded-full"></div>
+              <span className="text-sm font-medium text-slate-700">Ready to test</span>
+            </div>
+            <div className="h-4 w-px bg-slate-300"></div>
+            <div className="flex items-center space-x-2">
+              <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+              <span className="text-sm text-slate-600">
+                {getModelDisplayName(llmProvider, model)}
+              </span>
+            </div>
+          </div>
+          
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            className="p-2 hover:bg-slate-100 rounded-lg transition-colors duration-200"
+            disabled={isRunning}
+          >
+            <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Settings Panel */}
+        {showSettings && (
+          <div className="max-w-4xl mx-auto mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+            <h3 className="text-sm font-semibold text-slate-800 mb-3">AI Model Settings</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-2">
+                  Provider
+                </label>
+                <select
+                  value={llmProvider}
+                  onChange={(e) => handleProviderChange(e.target.value)}
+                  disabled={isRunning}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-2">
+                  Model
+                </label>
+                <select
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  disabled={isRunning}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  {llmProvider === 'openai' ? (
+                    <>
+                      <option value="gpt-4o">GPT-4o (Recommended)</option>
+                      <option value="gpt-4o-mini">GPT-4o Mini</option>
+                      <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                      <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Recommended)</option>
+                      <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
+                      <option value="claude-3-opus-20240229">Claude 3 Opus</option>
+                    </>
+                  )}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto">
           {messages.length === 0 ? (
             <div className="text-center py-12">
-              <div className="w-16 h-16 mx-auto mb-6 rounded-full flex items-center justify-center" style={{ background: 'var(--primary)' }}>
+              <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center">
                 <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
               </div>
-              <h2 className="text-2xl font-bold mb-4" style={{ color: 'var(--foreground)' }}>
+              <h2 className="text-2xl font-bold mb-4 text-slate-800">
                 {selectedBenchmark ? 'Loading benchmark details...' : 'Ready to test your website?'}
               </h2>
-              <p style={{ color: 'var(--muted)' }}>
+              <p className="text-slate-600">
                 {selectedBenchmark 
                   ? 'Please wait while we load the benchmark details'
                   : 'Enter a website URL to get started with AI agent testing'
@@ -381,11 +513,11 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
               {isRunning && (
                 <div className="flex items-center space-x-2 p-4">
                   <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
                   </div>
-                  <span className="text-sm" style={{ color: 'var(--muted)' }}>AI is thinking...</span>
+                  <span className="text-sm text-slate-600">AI is thinking...</span>
                 </div>
               )}
             </div>
@@ -395,7 +527,7 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
       </div>
 
       {/* Input Area */}
-      <div className="border-t p-6" style={{ borderColor: 'var(--border)' }}>
+      <div className="border-t border-slate-200 p-6 bg-white">
         <div className="max-w-4xl mx-auto">
           {step === 'idle' && (
             <form onSubmit={handleUrlSubmit} className="space-y-4">
@@ -435,7 +567,7 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
               />
               
               <div className="flex flex-wrap gap-2 mb-4">
-                <span className="text-sm font-medium" style={{ color: 'var(--muted)' }}>
+                <span className="text-sm font-medium text-slate-600">
                   Quick tasks:
                 </span>
                 {commonTasks.map((task) => (
@@ -443,11 +575,7 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
                     key={task}
                     type="button"
                     onClick={() => setTaskDescription(task)}
-                    className="text-xs px-3 py-1 rounded-full border hover:bg-gray-50 transition-colors"
-                    style={{ 
-                      borderColor: 'var(--border)',
-                      color: 'var(--muted)'
-                    }}
+                    className="text-xs px-3 py-1 rounded-full border border-slate-200 hover:bg-slate-50 transition-colors text-slate-600"
                     disabled={isRunning}
                   >
                     {task}
@@ -480,7 +608,7 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
 
           {step === 'running' && (
             <div className="text-center py-4">
-              <p style={{ color: 'var(--muted)' }}>
+              <p className="text-slate-600">
                 AI agent is running... Please wait while the test completes.
               </p>
             </div>

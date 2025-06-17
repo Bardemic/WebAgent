@@ -14,6 +14,28 @@ interface BenchmarkResultsProps {
 export function BenchmarkResults({ benchmarks, loading }: BenchmarkResultsProps) {
   const [selectedBenchmark, setSelectedBenchmark] = useState<Benchmark | null>(null)
 
+  const getModelDisplayName = (provider: string, model: string) => {
+    if (!provider || !model) return 'Unknown Model'
+    
+    if (provider === 'openai') {
+      switch (model) {
+        case 'gpt-4o': return 'GPT-4o'
+        case 'gpt-4o-mini': return 'GPT-4o Mini'
+        case 'gpt-4-turbo': return 'GPT-4 Turbo'
+        case 'gpt-3.5-turbo': return 'GPT-3.5 Turbo'
+        default: return model
+      }
+    } else if (provider === 'anthropic') {
+      switch (model) {
+        case 'claude-3-5-sonnet-20241022': return 'Claude 3.5 Sonnet'
+        case 'claude-3-haiku-20240307': return 'Claude 3 Haiku'
+        case 'claude-3-opus-20240229': return 'Claude 3 Opus'
+        default: return model
+      }
+    }
+    return model
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -57,6 +79,9 @@ export function BenchmarkResults({ benchmarks, loading }: BenchmarkResultsProps)
                 </span>
                 <span className="text-sm text-gray-500">
                   {formatDuration(benchmark.execution_time_ms)}
+                </span>
+                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                  {getModelDisplayName(benchmark.llm_provider || 'openai', benchmark.model || 'gpt-4o')}
                 </span>
               </div>
               
@@ -111,6 +136,18 @@ export function BenchmarkResults({ benchmarks, loading }: BenchmarkResultsProps)
                         selectedBenchmark.success ? 'text-green-700' : 'text-red-700'
                       }`}>
                         {selectedBenchmark.success ? 'Success' : 'Failed'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-700 mb-2">AI Model</h4>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded-full">
+                        {getModelDisplayName(selectedBenchmark.llm_provider || 'openai', selectedBenchmark.model || 'gpt-4o')}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        ({selectedBenchmark.llm_provider || 'openai'})
                       </span>
                     </div>
                   </div>
