@@ -245,18 +245,13 @@ async def run_single_model_benchmark(session_identifier: str, model_info: Dict[s
         execution_time = int((time.time() - start_time) * 1000)
         
         # Extract and process the final result from the agent
-        final_result_text = None
-        if result:
-            if isinstance(result, str):
-                final_result_text = result
-                await emit_log(session_identifier, model_id, "success", f"🎯 Final Result: {result}")
-            elif hasattr(result, 'message') or hasattr(result, 'content'):
-                # Handle different result object types
-                final_result_text = getattr(result, 'message', getattr(result, 'content', str(result)))
+        final_result_text = result.action_results()[-2].extracted_content
+        print(final_result_text, "!!!22!!!!!!!!!!!!!!!!!!")
+        if final_result_text:
+            if isinstance(final_result_text, str):
                 await emit_log(session_identifier, model_id, "success", f"🎯 Final Result: {final_result_text}")
             else:
-                final_result_text = str(result)
-                await emit_log(session_identifier, model_id, "success", f"🎯 Final Result: {final_result_text}")
+                await emit_log(session_identifier, model_id, "success", f"🎯 Final Result: {str(result)}")
         else:
             await emit_log(session_identifier, model_id, "warning", "⚠️ No final result returned from agent")
         
