@@ -9,9 +9,10 @@ type BenchmarkSession = SessionSummary
 interface BenchmarkDetailViewProps {
   benchmark: BenchmarkSession
   onBack: () => void
+  onRefresh?: () => void
 }
 
-export function BenchmarkDetailView({ benchmark, onBack }: BenchmarkDetailViewProps) {
+export function BenchmarkDetailView({ benchmark, onBack, onRefresh }: BenchmarkDetailViewProps) {
   const [statusMessages, setStatusMessages] = useState<string[]>([
     'Benchmark initialized',
     'Loading website...',
@@ -36,7 +37,10 @@ export function BenchmarkDetailView({ benchmark, onBack }: BenchmarkDetailViewPr
       })
       .then(data => {
         console.log('Benchmark result updated successfully:', data)
-        // Optionally refresh the benchmark data here
+        // Refresh the benchmark data
+        if (onRefresh) {
+          onRefresh()
+        }
       })
       .catch(error => {
         console.error('Error updating benchmark result:', error)

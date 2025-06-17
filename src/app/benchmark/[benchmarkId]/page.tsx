@@ -16,38 +16,38 @@ export default function BenchmarkDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    const fetchBenchmark = async () => {
-      try {
-        setLoading(true)
-        setError(null)
-        
-        const response = await fetch(`/api/benchmark/${benchmarkId}`)
-        
-        if (!response.ok) {
-          if (response.status === 404) {
-            setError('Benchmark not found')
-          } else {
-            setError('Failed to fetch benchmark details')
-          }
-          return
-        }
-        
-        const data = await response.json()
-        
-        if (data.success && data.data) {
-          setBenchmark(data.data)
+  const fetchBenchmark = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      
+      const response = await fetch(`/api/benchmark/${benchmarkId}`)
+      
+      if (!response.ok) {
+        if (response.status === 404) {
+          setError('Benchmark not found')
         } else {
-          setError('Invalid benchmark data received')
+          setError('Failed to fetch benchmark details')
         }
-      } catch (err) {
-        console.error('Error fetching benchmark:', err)
-        setError('Failed to load benchmark details')
-      } finally {
-        setLoading(false)
+        return
       }
+      
+      const data = await response.json()
+      
+      if (data.success && data.data) {
+        setBenchmark(data.data)
+      } else {
+        setError('Invalid benchmark data received')
+      }
+    } catch (err) {
+      console.error('Error fetching benchmark:', err)
+      setError('Failed to load benchmark details')
+    } finally {
+      setLoading(false)
     }
+  }
 
+  useEffect(() => {
     if (benchmarkId) {
       fetchBenchmark()
     }
@@ -55,6 +55,10 @@ export default function BenchmarkDetailPage() {
 
   const handleBack = () => {
     router.push('/')
+  }
+
+  const handleRefresh = () => {
+    fetchBenchmark()
   }
 
   if (loading) {
@@ -107,5 +111,5 @@ export default function BenchmarkDetailPage() {
     )
   }
 
-  return <BenchmarkDetailView benchmark={benchmark} onBack={handleBack} />
+  return <BenchmarkDetailView benchmark={benchmark} onBack={handleBack} onRefresh={handleRefresh} />
 } 
