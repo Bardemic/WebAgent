@@ -1,0 +1,50 @@
+{
+  "name": "benchmark-my-website",
+  "version": "1.0.0",
+  "description": "A powerful tool to test how well AI agents can navigate and interact with your website",
+  "private": true,
+  "keywords": ["ai", "website", "testing", "automation", "benchmarking", "browser-use"],
+  "author": "BenchMark My Website Team",
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "setup": "npm install && npx playwright install",
+    "db:setup": "echo 'Please run the SQL from supabase-schema.sql in your Supabase project'",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.14",
+    "@radix-ui/react-progress": "^1.1.7",
+    "@radix-ui/react-select": "^2.2.5",
+    "@radix-ui/react-toast": "^1.2.14",
+    "@supabase/auth-helpers-nextjs": "^0.10.0",
+    "@supabase/ssr": "^0.6.1",
+    "@supabase/supabase-js": "^2.50.0",
+    "@types/uuid": "^10.0.0",
+    "browser-use": "^0.0.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.516.0",
+    "next": "15.3.3",
+    "playwright": "^1.53.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^2.15.3",
+    "tailwind-merge": "^3.3.1",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.3.3",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

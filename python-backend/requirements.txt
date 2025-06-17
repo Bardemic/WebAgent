@@ -1,0 +1,10 @@
+browser-use[memory]
+fastapi
+uvicorn[standard]
+python-dotenv
+pydantic
+asyncio-mqtt
+supabase
+langchain-openai
+langchain-anthropic
+playwright 
