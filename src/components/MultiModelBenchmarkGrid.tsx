@@ -29,10 +29,16 @@ interface MultiModelBenchmarkGridProps {
 }
 
 const MODELS = [
-  { id: "gpt-4o", name: "GPT-4o", color: "bg-blue-50 border-blue-200" },
-  { id: "gpt-4o-mini", name: "GPT-4o Mini", color: "bg-green-50 border-green-200" },
-  { id: "gpt-4-turbo", name: "GPT-4 Turbo", color: "bg-purple-50 border-purple-200" },
-  { id: "gpt-3.5-turbo", name: "GPT-3.5 Turbo", color: "bg-orange-50 border-orange-200" }
+  // OpenAI Models
+  { id: "gpt-4o", name: "GPT-4o", color: "bg-blue-50 border-blue-200", provider: "openai" },
+  { id: "gpt-4o-mini", name: "GPT-4o Mini", color: "bg-green-50 border-green-200", provider: "openai" },
+  { id: "gpt-4-turbo", name: "GPT-4 Turbo", color: "bg-purple-50 border-purple-200", provider: "openai" },
+  { id: "gpt-3.5-turbo", name: "GPT-3.5 Turbo", color: "bg-orange-50 border-orange-200", provider: "openai" },
+  // Anthropic Models
+  { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", color: "bg-amber-50 border-amber-200", provider: "anthropic" },
+  { id: "claude-3-haiku-20240307", name: "Claude 3 Haiku", color: "bg-pink-50 border-pink-200", provider: "anthropic" },
+  { id: "claude-3-opus-20240229", name: "Claude 3 Opus", color: "bg-indigo-50 border-indigo-200", provider: "anthropic" },
+  { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", color: "bg-teal-50 border-teal-200", provider: "anthropic" }
 ]
 
 export function MultiModelBenchmarkGrid({ sessionId, isActive, onStatusChange, onCompletion }: MultiModelBenchmarkGridProps) {
@@ -177,7 +183,14 @@ export function MultiModelBenchmarkGrid({ sessionId, isActive, onStatusChange, o
               modelStatus === 'running' ? 'bg-blue-400 animate-pulse' :
               'bg-gray-400'
             }`}></div>
-            <h3 className="text-sm font-semibold text-gray-900">{model.name}</h3>
+            <div className="flex flex-col">
+              <h3 className="text-sm font-semibold text-gray-900">{model.name}</h3>
+              <span className={`text-xs ${
+                model.provider === 'openai' ? 'text-blue-600' : 'text-amber-600'
+              }`}>
+                {model.provider === 'openai' ? 'OpenAI' : 'Anthropic'}
+              </span>
+            </div>
           </div>
           <div className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(modelStatus)}`}>
             {modelStatus.charAt(0).toUpperCase() + modelStatus.slice(1)}
@@ -273,7 +286,7 @@ export function MultiModelBenchmarkGrid({ sessionId, isActive, onStatusChange, o
           
           <div className="flex items-center space-x-4 text-sm text-gray-500">
             <span>
-              {Object.keys(modelResults).length}/4 completed
+              {Object.keys(modelResults).length}/8 completed
             </span>
             <span>
               {Object.values(modelResults).filter(r => r.success).length} successful
@@ -295,8 +308,8 @@ export function MultiModelBenchmarkGrid({ sessionId, isActive, onStatusChange, o
         )}
       </div>
 
-      {/* 2x2 Grid */}
-      <div className="grid grid-cols-2 gap-4">
+      {/* 4x2 Grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {MODELS.map((model) => (
           <ModelCard key={model.id} model={model} />
         ))}

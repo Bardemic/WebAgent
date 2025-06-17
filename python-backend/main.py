@@ -100,12 +100,18 @@ app = FastAPI(title="BenchMark My Website API", version="1.0.0")
 logging.basicConfig(level=logging.INFO)
 browser_use_logger = logging.getLogger("browser_use")
 
-# Define the 4 OpenAI models to run concurrently
+# Define the 8 models to run (4 OpenAI + 4 Anthropic)
 MODELS_TO_RUN = [
-    {"id": "gpt-4o", "name": "GPT-4o"},
-    {"id": "gpt-4o-mini", "name": "GPT-4o Mini"},
-    {"id": "gpt-4-turbo", "name": "GPT-4 Turbo"},
-    {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo"}
+    # OpenAI Models
+    {"id": "gpt-4o", "name": "GPT-4o", "provider": "openai"},
+    {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "provider": "openai"},
+    {"id": "gpt-4-turbo", "name": "GPT-4 Turbo", "provider": "openai"},
+    {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "provider": "openai"},
+    # Anthropic Models
+    {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "provider": "anthropic"},
+    {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "provider": "anthropic"},
+    {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "provider": "anthropic"},
+    {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "provider": "anthropic"}
 ]
 
 # Configure CORS
@@ -210,7 +216,8 @@ async def run_single_model_benchmark(session_identifier: str, model_info: Dict[s
         await update_benchmark_in_db(session_identifier, model_id, "running", False, 0, None, None)
         
         # Get the appropriate LLM
-        llm = get_llm("openai", model_id)
+        provider = model_info.get("provider", "openai")  # Default to openai for backward compatibility
+        llm = get_llm(provider, model_id)
         
         # Create the BrowserUse agent with the specific task
         task = f"Go to {website_url} and {task_description}"
@@ -484,7 +491,8 @@ async def get_supported_models():
     """Get list of supported LLM models and providers."""
     return {
         "models": MODELS_TO_RUN,
-        "provider": "openai"
+        "providers": ["openai", "anthropic"],
+        "total_models": len(MODELS_TO_RUN)
     }
 
 if __name__ == "__main__":

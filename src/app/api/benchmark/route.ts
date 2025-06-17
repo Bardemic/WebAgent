@@ -6,10 +6,16 @@ const PYTHON_API_URL = process.env.PYTHON_API_URL || 'http://localhost:8000'
 
 // Models to run benchmarks with
 const MODELS_TO_RUN = [
-  { id: 'gpt-4o', name: 'GPT-4o' },
-  { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
-  { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
-  { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' }
+  // OpenAI Models
+  { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai' },
+  { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
+  { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: 'openai' },
+  { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', provider: 'openai' },
+  // Anthropic Models
+  { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', provider: 'anthropic' },
+  { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', provider: 'anthropic' },
+  { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', provider: 'anthropic' },
+  { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', provider: 'anthropic' }
 ]
 
 export async function POST(request: NextRequest) {
@@ -63,7 +69,7 @@ export async function POST(request: NextRequest) {
           status: 'pending',
           success: false,
           execution_time_ms: 0,
-          llm_provider: 'openai'
+          llm_provider: model.provider
         })
       )
     )
