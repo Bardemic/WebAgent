@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { validateUrl, normalizeUrl } from '@/lib/utils'
-import { BrowserLogs } from './BrowserLogs'
+import { MultiModelBenchmarkGrid } from './MultiModelBenchmarkGrid'
 
 interface BenchmarkFormProps {
   userId: string
@@ -12,8 +12,6 @@ interface BenchmarkFormProps {
 export function BenchmarkForm({ userId, onBenchmarkComplete }: BenchmarkFormProps) {
   const [websiteUrl, setWebsiteUrl] = useState('')
   const [taskDescription, setTaskDescription] = useState('')
-  const [llmProvider, setLlmProvider] = useState('openai')
-  const [model, setModel] = useState('gpt-4o')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -39,17 +37,19 @@ export function BenchmarkForm({ userId, onBenchmarkComplete }: BenchmarkFormProp
     setSessionId(null)
     setBenchmarkStatus('idle')
     
-    if (data.success) {
+    if (data.status === 'completed') {
       // Transform the completion data to match the expected format
+      const modelResults = data.model_results || {}
+      const executionTimes = Object.values(modelResults).map((r: any) => r?.execution_time_ms || 0)
+      
       const benchmarkData = {
-        id: data.benchmark_id,
-        success: data.success,
-        executionTimeMs: data.execution_time_ms,
-        errorMessage: data.error_message,
-        screenshotUrl: data.screenshot_url,
-        createdAt: data.created_at,
-        llmProvider: llmProvider,
-        model: model
+        id: `multi_${Date.now()}`, // Generate a composite ID
+        success: data.successful_models > 0,
+        executionTimeMs: executionTimes.length > 0 ? Math.max(...executionTimes) : 0,
+        completedModels: data.completed_models,
+        successfulModels: data.successful_models,
+        modelResults: modelResults,
+        errorMessage: data.error_message
       }
       
       onBenchmarkComplete(benchmarkData)
@@ -75,24 +75,18 @@ export function BenchmarkForm({ userId, onBenchmarkComplete }: BenchmarkFormProp
         throw new Error('Please enter a task description')
       }
 
-      // Generate a unique session ID
-      const newSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      setSessionId(newSessionId)
       setBenchmarkStatus('starting')
 
-      // Start the streaming benchmark
-      const response = await fetch('http://localhost:8000/api/benchmark/stream', {
+      // Start the benchmark via Next.js API (which will call Python backend)
+      const response = await fetch('/api/benchmark', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          website_url: normalizedUrl,
-          task_description: taskDescription.trim(),
-          user_id: userId,
-          llm_provider: llmProvider,
-          model: model,
-          session_id: newSessionId,
+          websiteUrl: normalizedUrl,
+          taskDescription: taskDescription.trim(),
+          userId: userId,
         }),
       })
 
@@ -102,8 +96,13 @@ export function BenchmarkForm({ userId, onBenchmarkComplete }: BenchmarkFormProp
         throw new Error(data.error || 'Failed to start benchmark')
       }
 
+      if (data.success && data.session_id) {
+        // Update the session ID with the one returned from the API
+        setSessionId(data.session_id)
+      }
+
       // The benchmark is now running in the background
-      // The BrowserLogs component will handle the streaming
+      // The MultiModelBenchmarkGrid component will handle the streaming
       
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred')
@@ -180,69 +179,21 @@ export function BenchmarkForm({ userId, onBenchmarkComplete }: BenchmarkFormProp
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-6">
-          <div className="space-y-2">
-            <label htmlFor="llm-provider" className="block text-sm font-bold text-gray-800 mb-3">
-              🤖 AI Provider
-            </label>
-            <div className="relative">
-              <select
-                id="llm-provider"
-                value={llmProvider}
-                onChange={(e) => {
-                  setLlmProvider(e.target.value)
-                  if (e.target.value === 'openai') {
-                    setModel('gpt-4o')
-                  } else if (e.target.value === 'anthropic') {
-                    setModel('claude-3-5-sonnet-20241022')
-                  }
-                }}
-                disabled={isRunning}
-                className="w-full px-5 py-4 bg-white/70 border border-gray-200 rounded-2xl shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all duration-300 text-gray-900 hover:bg-white/90 appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-              </select>
-              <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
-                <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
+        {/* Info about multi-model testing */}
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-4">
+          <div className="flex items-start space-x-3">
+            <div className="flex-shrink-0">
+              <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <label htmlFor="model" className="block text-sm font-bold text-gray-800 mb-3">
-              🧠 Model
-            </label>
-            <div className="relative">
-              <select
-                id="model"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                disabled={isRunning}
-                className="w-full px-5 py-4 bg-white/70 border border-gray-200 rounded-2xl shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all duration-300 text-gray-900 hover:bg-white/90 appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {llmProvider === 'openai' ? (
-                  <>
-                    <option value="gpt-4o">GPT-4o (Recommended)</option>
-                    <option value="gpt-4o-mini">GPT-4o Mini</option>
-                    <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                    <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-                  </>
-                ) : (
-                  <>
-                    <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Recommended)</option>
-                    <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
-                    <option value="claude-3-opus-20240229">Claude 3 Opus</option>
-                  </>
-                )}
-              </select>
-              <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
-                <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
+            <div>
+              <h4 className="text-sm font-semibold text-blue-900 mb-1">🚀 Multi-Model Testing</h4>
+              <p className="text-sm text-blue-700">
+                This will test your website with 4 different OpenAI models simultaneously: 
+                <span className="font-medium"> GPT-4o, GPT-4o Mini, GPT-4 Turbo, and GPT-3.5 Turbo</span>. 
+                You'll see real-time results from all models in a side-by-side comparison.
+              </p>
             </div>
           </div>
         </div>
@@ -267,8 +218,8 @@ export function BenchmarkForm({ userId, onBenchmarkComplete }: BenchmarkFormProp
             <div className="flex items-center justify-center">
               <div className="animate-spin rounded-full h-6 w-6 border-2 border-white border-t-transparent mr-3"></div>
               <span>
-                {benchmarkStatus === 'starting' && 'Starting Benchmark...'}
-                {benchmarkStatus === 'running' && 'Running Benchmark...'}
+                {benchmarkStatus === 'starting' && 'Starting All Models...'}
+                {benchmarkStatus === 'running' && 'Running 4 Models...'}
                 {benchmarkStatus === 'completed' && 'Completing...'}
                 {benchmarkStatus === 'failed' && 'Processing...'}
               </span>
@@ -278,16 +229,16 @@ export function BenchmarkForm({ userId, onBenchmarkComplete }: BenchmarkFormProp
               <svg className="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
-              Start Benchmark
+              Start Multi-Model Benchmark
             </span>
           )}
           <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
         </button>
       </form>
 
-      {/* Real-time Browser Logs */}
+      {/* Multi-Model Real-time Grid */}
       <div className="space-y-4">
-        <BrowserLogs
+        <MultiModelBenchmarkGrid
           sessionId={sessionId}
           isActive={isRunning}
           onStatusChange={handleStatusChange}

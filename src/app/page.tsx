@@ -3,21 +3,20 @@
 import { useState, useEffect } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import { User, AuthChangeEvent, Session } from '@supabase/supabase-js'
-import { ChatInterface } from '@/components/ChatInterface'
-import { Sidebar } from '@/components/Sidebar'
+import { BenchmarkList } from '@/components/BenchmarkList'
+import { BenchmarkForm } from '@/components/BenchmarkForm'
 import { AuthModal } from '@/components/AuthModal'
 import { Header } from '@/components/Header'
-import { Database } from '@/lib/supabase'
+import { SessionSummary } from '@/lib/database'
 
-type Benchmark = Database['public']['Tables']['benchmarks']['Row']
+type BenchmarkSession = SessionSummary
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null)
-  const [benchmarks, setBenchmarks] = useState<Benchmark[]>([])
+  const [benchmarks, setBenchmarks] = useState<BenchmarkSession[]>([])
   const [loading, setLoading] = useState(true)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showAuthModal, setShowAuthModal] = useState(false)
-  const [selectedBenchmark, setSelectedBenchmark] = useState<Benchmark | null>(null)
+  const [currentView, setCurrentView] = useState<'list' | 'form'>('list')
   
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -71,15 +70,15 @@ export default function Home() {
 
   const handleBenchmarkComplete = (newBenchmark: any) => {
     setBenchmarks(prev => [newBenchmark, ...prev])
+    setCurrentView('list') // Return to list after completion
   }
 
-  const handleNewChat = () => {
-    // Reset chat state - this will be handled by ChatInterface
-    setSelectedBenchmark(null)
+  const handleNewBenchmark = () => {
+    setCurrentView('form')
   }
 
-  const handleBenchmarkSelect = (benchmark: Benchmark) => {
-    setSelectedBenchmark(benchmark)
+  const handleBackToList = () => {
+    setCurrentView('list')
   }
 
   if (loading) {
@@ -184,31 +183,54 @@ export default function Home() {
     )
   }
 
+  // Render different views based on current state
+  const renderCurrentView = () => {
+    switch (currentView) {
+      case 'list':
+        return (
+          <BenchmarkList
+            benchmarks={benchmarks}
+            onNewBenchmark={handleNewBenchmark}
+          />
+        )
+      case 'form':
+        return (
+          <div className="max-w-4xl mx-auto p-8">
+            <div className="flex items-center space-x-4 mb-8">
+              <button
+                onClick={handleBackToList}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <h1 className="text-3xl font-bold text-gray-900">Create New Benchmark</h1>
+            </div>
+            <BenchmarkForm
+              userId={user!.id}
+              onBenchmarkComplete={handleBenchmarkComplete}
+            />
+          </div>
+        )
+      default:
+        return null
+    }
+  }
+
   return (
-    <div className="h-screen flex bg-white">
-      <Sidebar
-        benchmarks={benchmarks}
-        isOpen={sidebarOpen}
-        onToggle={() => setSidebarOpen(!sidebarOpen)}
-        onNewChat={handleNewChat}
-        onBenchmarkSelect={handleBenchmarkSelect}
-        user={user}
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-50">
+      <Header 
+        user={user} 
+        onAuthClick={() => setShowAuthModal(true)}
       />
       
-      <div className="flex-1 flex flex-col">
-        <Header 
-          user={user} 
-          onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
-          showSidebarToggle={!sidebarOpen}
-        />
-        
-        <ChatInterface
-          user={user}
-          onBenchmarkComplete={handleBenchmarkComplete}
-          selectedBenchmark={selectedBenchmark}
-          onClearSelection={() => setSelectedBenchmark(null)}
-        />
-      </div>
+      {renderCurrentView()}
+      
+      <AuthModal 
+        isOpen={showAuthModal} 
+        onClose={() => setShowAuthModal(false)} 
+      />
     </div>
   )
 }

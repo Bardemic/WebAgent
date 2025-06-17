@@ -1,18 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
 import { normalizeUrl, validateUrl } from '@/lib/utils'
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+import { db } from '@/lib/database'
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL || 'http://localhost:8000'
+
+// Models to run benchmarks with
+const MODELS_TO_RUN = [
+  { id: 'gpt-4o', name: 'GPT-4o' },
+  { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
+  { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
+  { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' }
+]
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { websiteUrl, taskDescription, userId, llmProvider = 'openai', model = 'gpt-4o' } = body
+    const { websiteUrl, taskDescription, userId } = body
 
     // Validation
     if (!websiteUrl || !taskDescription || !userId) {
@@ -30,29 +33,73 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Call the Python BrowserUse API
-    const pythonResponse = await fetch(`${PYTHON_API_URL}/api/benchmark`, {
+    // Generate session ID
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+
+    // Create benchmark session in database
+    const sessionUuid = await db.createBenchmarkSession({
+      session_id: sessionId,
+      user_id: userId,
+      website_url: normalizedUrl,
+      task_description: taskDescription,
+      status: 'running',
+      total_models: MODELS_TO_RUN.length,
+      completed_models: 0,
+      successful_models: 0,
+      start_time: new Date().toISOString()
+    })
+
+    // Create benchmark records for each model
+    const benchmarkIds = await Promise.all(
+      MODELS_TO_RUN.map(model => 
+        db.createBenchmark({
+          session_id: sessionUuid,
+          session_identifier: sessionId,
+          user_id: userId,
+          website_url: normalizedUrl,
+          task_description: taskDescription,
+          model_id: model.id,
+          model_name: model.name,
+          status: 'pending',
+          success: false,
+          execution_time_ms: 0,
+          llm_provider: 'openai'
+        })
+      )
+    )
+
+    // Start benchmark execution in Python backend
+    const pythonResponse = await fetch(`${PYTHON_API_URL}/api/benchmark/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        website_url: normalizedUrl,
-        task_description: taskDescription,
+        session_id: sessionId,
         user_id: userId,
-        llm_provider: llmProvider,
-        model: model
+        website_url: normalizedUrl,
+        task_description: taskDescription
       })
     })
 
     if (!pythonResponse.ok) {
+      // If Python backend fails, mark session as failed
+      await db.updateBenchmarkStatus(sessionUuid, 'failed', {
+        error_message: 'Failed to start benchmark execution'
+      })
+      
       const errorData = await pythonResponse.json().catch(() => ({}))
       throw new Error(errorData.detail?.message || errorData.message || 'Python API call failed')
     }
 
     const result = await pythonResponse.json()
     
-    return NextResponse.json(result)
+    return NextResponse.json({
+      success: true,
+      session_id: sessionId,
+      session_uuid: sessionUuid,
+      message: 'Benchmark started for all models'
+    })
 
   } catch (error) {
     console.error('Benchmark error:', error)
@@ -83,8 +130,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const userId = searchParams.get('userId')
-    const limit = parseInt(searchParams.get('limit') || '10')
-    const offset = parseInt(searchParams.get('offset') || '0')
+    const limit = parseInt(searchParams.get('limit') || '50')
 
     if (!userId) {
       return NextResponse.json(
@@ -93,45 +139,16 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Fetch benchmarks for the user
-    const { data: benchmarks, error } = await supabase
-      .from('benchmarks')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1)
-
-    if (error) {
-      console.error('Database error:', error)
-      return NextResponse.json(
-        { error: 'Failed to fetch benchmarks' },
-        { status: 500 }
-      )
-    }
-
-    // Get total count for pagination
-    const { count, error: countError } = await supabase
-      .from('benchmarks')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId)
-
-    if (countError) {
-      console.error('Count error:', countError)
-    }
-
+    // Fetch benchmark sessions from database
+    const sessions = await db.getUserSessions(userId, limit)
+    
     return NextResponse.json({
       success: true,
-      data: benchmarks,
-      pagination: {
-        limit,
-        offset,
-        total: count || 0,
-        hasMore: (offset + limit) < (count || 0)
-      }
+      data: sessions
     })
 
   } catch (error) {
-    console.error('Fetch benchmarks error:', error)
+    console.error('Fetch benchmark sessions error:', error)
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

@@ -3,27 +3,97 @@ import os
 import time
 import json
 import base64
-from typing import Dict, Any
-from fastapi import FastAPI, HTTPException
+import httpx
+from typing import Dict, Any, List
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from supabase import create_client, Client
 from browser_use import Agent, BrowserSession
 import uuid
 import logging
 
 # Import from our modules
-from models import BenchmarkRequest, BenchmarkStreamRequest
+from models import (
+    BenchmarkRequest, BenchmarkStreamRequest, LogEntry, ModelResult,
+    StreamingUpdate, BenchmarkStatus
+)
+from services import active_sessions, emit_log, get_llm, cleanup_session
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-from langchain_anthropic import ChatAnthropic
 import re
 from typing import Optional, Dict, Any, List, AsyncGenerator
 from pydantic import BaseModel
-from contextlib import asynccontextmanager
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
+
+# Next.js API URL
+NEXTJS_API_URL = os.getenv('NEXTJS_API_URL', 'http://localhost:3000')
+
+async def update_benchmark_in_db(session_identifier: str, model_id: str, status: str, success: bool, execution_time_ms: int, error_message: str = None, screenshot_url: str = None):
+    """Update benchmark status in the database via Next.js API."""
+    try:
+        async with httpx.AsyncClient() as client:
+            # First, get the benchmark ID by looking up benchmarks for this session
+            response = await client.get(f"{NEXTJS_API_URL}/api/benchmark/lookup", params={
+                'session_identifier': session_identifier,
+                'model_id': model_id
+            })
+            
+            if response.status_code != 200:
+                print(f"Failed to lookup benchmark for {model_id}: {response.status_code}")
+                return
+            
+            data = response.json()
+            benchmark_id = data.get('benchmark_id')
+            
+            if not benchmark_id:
+                print(f"No benchmark_id found for session {session_identifier}, model {model_id}")
+                return
+            
+            # Update the benchmark
+            update_response = await client.post(f"{NEXTJS_API_URL}/api/benchmark/update", json={
+                'benchmark_id': benchmark_id,
+                'status': status,
+                'success': success,
+                'execution_time_ms': execution_time_ms,
+                'error_message': error_message,
+                'screenshot_url': screenshot_url
+            })
+            
+            if update_response.status_code == 200:
+                print(f"✅ Updated benchmark in DB: {model_id} -> {status}")
+            else:
+                print(f"❌ Failed to update benchmark in DB: {update_response.status_code}")
+                
+    except Exception as e:
+        print(f"Error updating benchmark in DB: {e}")
+
+async def update_session_status_in_db(session_identifier: str, status: str, completed_models: int, successful_models: int):
+    """Update session status in the database via Next.js API."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(f"{NEXTJS_API_URL}/api/benchmark/session/update", json={
+                'session_identifier': session_identifier,
+                'status': status,
+                'completed_models': completed_models,
+                'successful_models': successful_models
+            })
+            
+            if response.status_code == 200:
+                print(f"✅ Updated session status in DB: {session_identifier} -> {status}")
+            else:
+                print(f"❌ Failed to update session status in DB: {response.status_code}")
+                
+    except Exception as e:
+        print(f"Error updating session status in DB: {e}")
+
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle datetime objects."""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 app = FastAPI(title="BenchMark My Website API", version="1.0.0")
 
@@ -31,7 +101,13 @@ app = FastAPI(title="BenchMark My Website API", version="1.0.0")
 logging.basicConfig(level=logging.INFO)
 browser_use_logger = logging.getLogger("browser_use")
 
-# Custom handler will be created after class definition
+# Define the 4 OpenAI models to run concurrently
+MODELS_TO_RUN = [
+    {"id": "gpt-4o", "name": "GPT-4o"},
+    {"id": "gpt-4o-mini", "name": "GPT-4o Mini"},
+    {"id": "gpt-4-turbo", "name": "GPT-4 Turbo"},
+    {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo"}
+]
 
 # Configure CORS
 app.add_middleware(
@@ -42,56 +118,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Supabase client
-supabase_url = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-
-if not supabase_url or not supabase_key:
-    raise ValueError("Supabase environment variables are required")
-
-supabase: Client = create_client(supabase_url, supabase_key)
-
-# Global dictionary to store active streaming sessions
-active_sessions: Dict[str, Dict[str, Any]] = {}
-
-class LogEntry(BaseModel):
-    timestamp: str
-    level: str
-    message: str
-    data: Optional[Dict[str, Any]] = None
-
-async def emit_log(session_id: str, level: str, message: str, data: Optional[Dict[str, Any]] = None):
-    """Emit a log entry to the active session."""
-    if session_id in active_sessions:
-        log_entry = LogEntry(
-            timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
-            level=level,
-            message=message,
-            data=data
-        )
-        
-        # Add to session logs
-        if 'logs' not in active_sessions[session_id]:
-            active_sessions[session_id]['logs'] = []
-        active_sessions[session_id]['logs'].append(log_entry.model_dump())
-        
-        # Mark that new data is available
-        active_sessions[session_id]['has_new_data'] = True
-
 class CustomLogHandler(logging.Handler):
     """Custom log handler to capture browser_use logs and forward them to sessions."""
     
     def __init__(self):
         super().__init__()
         self.current_session_id = None
+        self.current_model_id = None
     
-    def set_session_id(self, session_id: str):
-        """Set the current session ID for log forwarding."""
+    def set_session_info(self, session_id: str, model_id: str):
+        """Set the current session and model ID for log forwarding."""
         self.current_session_id = session_id
+        self.current_model_id = model_id
     
     def emit(self, record):
         """Emit log record to the current session."""
-        if not self.current_session_id or self.current_session_id not in active_sessions:
+        if not self.current_session_id or self.current_session_id not in active_sessions or not self.current_model_id:
             return
         
         try:
@@ -114,7 +156,7 @@ class CustomLogHandler(logging.Handler):
             clean_message = re.sub(r'^\w+\s+\[.*?\]\s*', '', message)
             if clean_message:
                 # Create task to emit log (non-blocking)
-                asyncio.create_task(emit_log(self.current_session_id, level, clean_message))
+                asyncio.create_task(emit_log(self.current_session_id, self.current_model_id, level, clean_message))
                 
         except Exception as e:
             # Don't let logging errors break the application
@@ -123,182 +165,82 @@ class CustomLogHandler(logging.Handler):
 class CustomAgent(Agent):
     """Custom Agent that captures logs for streaming."""
     
-    def __init__(self, session_id: str, *args, **kwargs):
+    def __init__(self, session_id: str, model_id: str, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.session_id = session_id
+        self.model_id = model_id
         self.captured_logs = []
     
     async def run(self, max_steps: int = 100):
         """Override run method to capture logs."""
-        await emit_log(self.session_id, "info", f"🚀 Starting benchmark task: {self.task}")
+        await emit_log(self.session_id, self.model_id, "info", f"🚀 Starting benchmark task: {self.task}")
         
         try:
             # Initialize browser
-            await emit_log(self.session_id, "info", "🌐 Launching browser in headless mode...")
+            await emit_log(self.session_id, self.model_id, "info", "🌐 Launching browser in headless mode...")
             
-            # Set the session ID for the custom log handler
-            custom_handler.set_session_id(self.session_id)
+            # Set the session and model ID for the custom log handler
+            custom_handler.set_session_info(self.session_id, self.model_id)
             
             result = await super().run(max_steps)
             
-            await emit_log(self.session_id, "success", "✅ Benchmark completed successfully!")
+            await emit_log(self.session_id, self.model_id, "success", "✅ Benchmark completed successfully!")
             return result
             
         except Exception as e:
-            await emit_log(self.session_id, "error", f"❌ Benchmark failed: {str(e)}")
+            await emit_log(self.session_id, self.model_id, "error", f"❌ Benchmark failed: {str(e)}")
             raise
         finally:
             # Clear session from log handler
-            custom_handler.set_session_id(None)
-
-# Override some Agent methods to capture more detailed logs
-def patch_agent_methods(agent: CustomAgent):
-    """Patch agent methods to capture detailed browser logs."""
-    
-    # Patch browser controller methods if available
-    if hasattr(agent, 'browser') and agent.browser:
-        browser = agent.browser
-        
-        # Patch controller methods
-        if hasattr(browser, 'controller'):
-            controller = browser.controller
-            
-            # Store original methods
-            original_click = getattr(controller, 'click', None)
-            original_type = getattr(controller, 'type', None)
-            original_scroll = getattr(controller, 'scroll', None)
-            original_navigate = getattr(controller, 'navigate', None)
-            
-            # Create logged versions
-            async def logged_click(*args, **kwargs):
-                element_info = f"index {args[0]}" if args else "element"
-                await emit_log(agent.session_id, "action", f"🖱️ Clicking {element_info}")
-                if original_click:
-                    result = await original_click(*args, **kwargs)
-                    await emit_log(agent.session_id, "success", f"✅ Click completed on {element_info}")
-                    return result
-            
-            async def logged_type(*args, **kwargs):
-                text = args[1] if len(args) > 1 else kwargs.get('text', 'text')
-                element_info = f"index {args[0]}" if args else "element"
-                await emit_log(agent.session_id, "action", f"⌨️ Typing '{text}' into {element_info}")
-                if original_type:
-                    result = await original_type(*args, **kwargs)
-                    await emit_log(agent.session_id, "success", f"✅ Text input completed: {element_info}")
-                    return result
-            
-            async def logged_scroll(*args, **kwargs):
-                direction = args[0] if args else kwargs.get('direction', 'down')
-                await emit_log(agent.session_id, "action", f"📜 Scrolling {direction}")
-                if original_scroll:
-                    result = await original_scroll(*args, **kwargs)
-                    await emit_log(agent.session_id, "success", f"✅ Scroll completed: {direction}")
-                    return result
-            
-            async def logged_navigate(*args, **kwargs):
-                url = args[0] if args else kwargs.get('url', 'page')
-                await emit_log(agent.session_id, "action", f"🌐 Navigating to: {url}")
-                if original_navigate:
-                    result = await original_navigate(*args, **kwargs)
-                    await emit_log(agent.session_id, "success", f"✅ Navigation completed: {url}")
-                    return result
-            
-            # Apply patches
-            if original_click:
-                controller.click = logged_click
-            if original_type:
-                controller.type = logged_type
-            if original_scroll:
-                controller.scroll = logged_scroll
-            if original_navigate:
-                controller.navigate = logged_navigate
-
-def get_llm(provider: str, model: str):
-    """Get the appropriate LLM based on provider and model."""
-    if provider.lower() == "openai":
-        return ChatOpenAI(
-            model=model,
-            api_key=os.getenv("OPENAI_API_KEY"),
-            temperature=0
-        )
-    elif provider.lower() == "anthropic":
-        return ChatAnthropic(
-            model=model,
-            api_key=os.getenv("ANTHROPIC_API_KEY"),
-            temperature=0
-        )
-    else:
-        raise ValueError(f"Unsupported LLM provider: {provider}")
-
-async def cleanup_session(session_id: str, delay: int = 60):
-    """Clean up session after delay."""
-    await asyncio.sleep(delay)
-    if session_id in active_sessions:
-        del active_sessions[session_id]
+            custom_handler.set_session_info(None, None)
 
 # Create and add custom handler after class definition
 custom_handler = CustomLogHandler()
 browser_use_logger.addHandler(custom_handler)
 
-@app.post("/api/benchmark/stream")
-async def start_benchmark_stream(request: BenchmarkStreamRequest):
-    """Start a benchmark with streaming logs."""
-    session_id = request.session_id
-    
-    # Initialize session
-    active_sessions[session_id] = {
-        'logs': [],
-        'has_new_data': False,
-        'status': 'starting',
-        'request': request.dict()
-    }
-    
-    # Start the benchmark in background
-    asyncio.create_task(run_benchmark_with_logs(request))
-    
-    return {"success": True, "session_id": session_id, "message": "Benchmark started"}
-
-async def run_benchmark_with_logs(request: BenchmarkStreamRequest):
-    """Run the benchmark and capture logs."""
-    session_id = request.session_id
+async def run_single_model_benchmark(session_identifier: str, model_info: Dict[str, str], website_url: str, task_description: str) -> ModelResult:
+    """Run benchmark for a single model."""
+    model_id = model_info["id"]
+    model_name = model_info["name"]
     start_time = time.time()
     
     try:
-        # Update status
-        active_sessions[session_id]['status'] = 'running'
+        await emit_log(session_identifier, model_id, "info", f"🤖 Starting {model_name}")
+        
+        # Update database: mark as running
+        await update_benchmark_in_db(session_identifier, model_id, "running", False, 0)
         
         # Get the appropriate LLM
-        llm = get_llm(request.llm_provider, request.model)
+        llm = get_llm("openai", model_id)
         
         # Create the BrowserUse agent with the specific task
-        task = f"Go to {request.website_url} and {request.task_description}"
+        task = f"Go to {website_url} and {task_description}"
         
-        await emit_log(session_id, "info", f"🎯 Task: {task}")
-        await emit_log(session_id, "info", f"🤖 Using {request.llm_provider} {request.model}")
+        await emit_log(session_identifier, model_id, "info", f"🎯 Task: {task}")
         
-        # Create a headless browser session
+        # Create a headless browser session with unique user data directory
+        user_data_dir = f"~/.config/browseruse/profiles/{session_identifier}_{model_id}"
         browser_session = BrowserSession(
             headless=True,
             viewport={'width': 1280, 'height': 720},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            user_data_dir=user_data_dir
         )
         
         agent = CustomAgent(
-            session_id=session_id,
+            session_id=session_identifier,
+            model_id=model_id,
             task=task,
             llm=llm,
             browser_session=browser_session,
             use_vision=True,
-            save_conversation_path=f"logs/conversation_{session_id}.json",
+            save_conversation_path=f"logs/conversation_{session_identifier}_{model_id}.json",
             max_failures=3,
             retry_delay=2,
         )
         
-        # Set the session ID for the custom log handler
-        custom_handler.set_session_id(session_id)
-        
         # Run the agent and capture results
-        await emit_log(session_id, "info", "🔄 Executing benchmark...")
+        await emit_log(session_identifier, model_id, "info", "🔄 Executing benchmark...")
         result = await agent.run()
         
         execution_time = int((time.time() - start_time) * 1000)
@@ -306,169 +248,197 @@ async def run_benchmark_with_logs(request: BenchmarkStreamRequest):
         # Log the final result from the agent
         if result:
             if isinstance(result, str):
-                await emit_log(session_id, "success", f"🎯 Final Result: {result}")
+                await emit_log(session_identifier, model_id, "success", f"🎯 Final Result: {result}")
             elif hasattr(result, 'message') or hasattr(result, 'content'):
                 # Handle different result object types
                 final_message = getattr(result, 'message', getattr(result, 'content', str(result)))
-                await emit_log(session_id, "success", f"🎯 Final Result: {final_message}")
+                await emit_log(session_identifier, model_id, "success", f"🎯 Final Result: {final_message}")
             else:
-                await emit_log(session_id, "success", f"🎯 Final Result: {str(result)}")
+                await emit_log(session_identifier, model_id, "success", f"🎯 Final Result: {str(result)}")
         else:
-            await emit_log(session_id, "warning", "⚠️ No final result returned from agent")
+            await emit_log(session_identifier, model_id, "warning", "⚠️ No final result returned from agent")
         
-        # Get the browser history and screenshots
-        browser_logs = []
+        # Get screenshot
         screenshot_base64 = None
-        agent_steps = []
         
-        await emit_log(session_id, "info", "📸 Capturing final screenshot...")
+        await emit_log(session_identifier, model_id, "info", "📸 Capturing final screenshot...")
         
         # Extract information from the agent (safely handling potential missing attributes)
         if hasattr(agent, 'browser') and agent.browser:
-            # Get browser logs (if method exists)
-            if hasattr(agent.browser, 'get_logs'):
-                try:
-                    browser_logs = agent.browser.get_logs()
-                except Exception:
-                    pass  # Browser logs not available
-            
             # Take final screenshot (if method exists)
             if hasattr(agent.browser, 'take_screenshot'):
                 try:
                     screenshot_bytes = await agent.browser.take_screenshot()
                     if screenshot_bytes:
                         screenshot_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
+                        await emit_log(session_identifier, model_id, "success", "✅ Screenshot captured!")
                 except Exception:
-                    pass  # Screenshot not available
-        
-        # Get agent execution steps (safely handling potential missing attributes)
-        if hasattr(agent, 'history'):
-            try:
-                agent_steps = [
-                    {
-                        "step": i + 1,
-                        "action": step.get("action", ""),
-                        "result": step.get("result", ""),
-                        "timestamp": step.get("timestamp", "")
-                    }
-                    for i, step in enumerate(agent.history)
-                ]
-            except Exception:
-                pass  # History not available
+                    await emit_log(session_identifier, model_id, "warning", "⚠️ Could not capture screenshot")
         
         # Determine success based on result
         success = result is not None and not isinstance(result, Exception)
         error_message = str(result) if isinstance(result, Exception) else None
         
-        # Upload screenshot to Supabase if available
-        screenshot_url = None
-        if screenshot_base64:
-            try:
-                await emit_log(session_id, "info", "☁️ Uploading screenshot to Supabase...")
-                screenshot_id = str(uuid.uuid4())
-                file_name = f"screenshots/{screenshot_id}.png"
-                
-                # Convert base64 to bytes
-                screenshot_bytes = base64.b64decode(screenshot_base64)
-                
-                # Upload to Supabase storage
-                upload_result = supabase.storage.from_("benchmark-screenshots").upload(
-                    file_name, screenshot_bytes, {"content-type": "image/png"}
-                )
-                
-                # Handle upload result safely
-                if hasattr(upload_result, 'error') and not upload_result.error:
-                    # Get public URL
-                    public_url_response = supabase.storage.from_("benchmark-screenshots").get_public_url(file_name)
-                    # Handle different possible return types
-                    if isinstance(public_url_response, dict):
-                        screenshot_url = public_url_response.get("publicURL")
-                    else:
-                        screenshot_url = str(public_url_response)
-                    await emit_log(session_id, "success", "✅ Screenshot uploaded successfully!")
-                    
-            except Exception as e:
-                await emit_log(session_id, "warning", f"⚠️ Screenshot upload error: {e}")
+        await emit_log(session_identifier, model_id, "success", f"🎉 {model_name} completed in {execution_time}ms!")
         
-        await emit_log(session_id, "info", "💾 Saving benchmark results to database...")
+        # Update database: mark as completed
+        await update_benchmark_in_db(
+            session_identifier, 
+            model_id, 
+            "completed", 
+            success, 
+            execution_time, 
+            error_message, 
+            f"data:image/png;base64,{screenshot_base64}" if screenshot_base64 else None
+        )
         
-        # Save benchmark result to database
-        benchmark_data = {
-            "user_id": request.user_id,
-            "website_url": request.website_url,
-            "task_description": request.task_description,
-            "success": success,
-            "execution_time_ms": execution_time,
-            "error_message": error_message,
-            "browser_logs": active_sessions[session_id]['logs'],  # Use captured streaming logs
-            "screenshot_url": screenshot_url,
-            "agent_steps": agent_steps,
-            "llm_provider": request.llm_provider,
-            "model": request.model
-        }
-        
-        db_result = supabase.table("benchmarks").insert(benchmark_data).execute()
-        
-        if db_result.data:
-            benchmark_id = db_result.data[0]["id"]
-            created_at = db_result.data[0]["created_at"]
-            await emit_log(session_id, "success", f"✅ Benchmark saved with ID: {benchmark_id}")
-        else:
-            raise Exception("Failed to save benchmark to database")
-        
-        # Update session with final results
-        active_sessions[session_id].update({
-            'status': 'completed',
-            'success': success,
-            'execution_time_ms': execution_time,
-            'benchmark_id': benchmark_id,
-            'screenshot_url': screenshot_url,
-            'created_at': created_at
-        })
-        
-        await emit_log(session_id, "success", f"🎉 Benchmark completed in {execution_time}ms!")
+        return ModelResult(
+            model_id=model_id,
+            model_name=model_name,
+            status=BenchmarkStatus.COMPLETED,
+            success=success,
+            execution_time_ms=execution_time,
+            error_message=error_message,
+            screenshot_url=screenshot_base64,  # Return base64 directly for Next.js to handle
+            start_time=datetime.utcnow(),
+            end_time=datetime.utcnow()
+        )
         
     except Exception as e:
         execution_time = int((time.time() - start_time) * 1000)
         error_message = str(e)
         
-        await emit_log(session_id, "error", f"💥 Benchmark failed: {error_message}")
+        await emit_log(session_identifier, model_id, "error", f"💥 {model_name} failed: {error_message}")
         
-        # Update session with error
-        active_sessions[session_id].update({
-            'status': 'failed',
-            'success': False,
-            'execution_time_ms': execution_time,
-            'error_message': error_message
+        # Update database: mark as failed
+        await update_benchmark_in_db(
+            session_identifier, 
+            model_id, 
+            "failed", 
+            False, 
+            execution_time, 
+            error_message
+        )
+        
+        return ModelResult(
+            model_id=model_id,
+            model_name=model_name,
+            status=BenchmarkStatus.FAILED,
+            success=False,
+            execution_time_ms=execution_time,
+            error_message=error_message,
+            screenshot_url=None,
+            start_time=datetime.utcnow(),
+            end_time=datetime.utcnow()
+        )
+
+@app.post("/api/benchmark/stream")
+async def start_benchmark_stream(request: BenchmarkStreamRequest):
+    """Start a benchmark with streaming logs for all 4 models."""
+    session_identifier = request.session_id
+    
+    try:
+        # Initialize active session for streaming
+        active_sessions[session_identifier] = {
+            'logs': [],
+            'has_new_data': False,
+            'status': 'starting',
+            'request': request.dict(),
+            'model_results': {}
+        }
+        
+        # Start all 4 benchmarks in background
+        asyncio.create_task(run_all_models_benchmark(request))
+        
+        return {"success": True, "session_id": session_identifier, "message": "Benchmark started for all models"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start benchmark: {str(e)}")
+
+async def run_all_models_benchmark(request: BenchmarkStreamRequest):
+    """Run the benchmark on all 4 models sequentially to avoid browser conflicts."""
+    session_identifier = request.session_id
+    
+    try:
+        # Update status
+        active_sessions[session_identifier]['status'] = 'running'
+        
+        await emit_log(session_identifier, "system", "info", f"🚀 Starting benchmarks for all {len(MODELS_TO_RUN)} models (running sequentially)...")
+        
+        # Run models sequentially to avoid browser singleton lock conflicts
+        model_results = []
+        for i, model_info in enumerate(MODELS_TO_RUN):
+            await emit_log(session_identifier, "system", "info", f"▶️ Starting model {i+1}/{len(MODELS_TO_RUN)}: {model_info['name']}")
+            
+            try:
+                result = await run_single_model_benchmark(
+                    session_identifier, 
+                    model_info, 
+                    request.website_url, 
+                    request.task_description
+                )
+                model_results.append(result)
+                
+                # Add a small delay between models to ensure proper cleanup
+                if i < len(MODELS_TO_RUN) - 1:  # Don't wait after the last model
+                    await emit_log(session_identifier, "system", "info", f"✅ {model_info['name']} completed. Preparing next model...")
+                    await asyncio.sleep(2)  # 2 seconds between models
+                    
+            except Exception as e:
+                await emit_log(session_identifier, model_info["id"], "error", f"❌ {model_info['name']} failed: {str(e)}")
+                model_results.append(e)  # Keep the exception for processing below
+        
+        # Process results
+        completed_models = 0
+        successful_models = 0
+        
+        for i, result in enumerate(model_results):
+            if isinstance(result, Exception):
+                # Handle exception
+                model_info = MODELS_TO_RUN[i]
+                await emit_log(session_identifier, model_info["id"], "error", f"❌ {model_info['name']} crashed: {str(result)}")
+                active_sessions[session_identifier]['model_results'][model_info["id"]] = ModelResult(
+                    model_id=model_info["id"],
+                    model_name=model_info["name"],
+                    status=BenchmarkStatus.FAILED,
+                    success=False,
+                    execution_time_ms=0,
+                    error_message=str(result),
+                    screenshot_url=None,
+                    start_time=datetime.utcnow(),
+                    end_time=datetime.utcnow()
+                )
+            else:
+                # Handle successful result
+                active_sessions[session_identifier]['model_results'][result.model_id] = result
+                if result.success:
+                    successful_models += 1
+            completed_models += 1
+        
+        # Update session with final results
+        active_sessions[session_identifier].update({
+            'status': 'completed',
+            'completed_models': completed_models,
+            'successful_models': successful_models
         })
         
-        # Still try to save failed benchmark
-        try:
-            benchmark_data = {
-                "user_id": request.user_id,
-                "website_url": request.website_url,
-                "task_description": request.task_description,
-                "success": False,
-                "execution_time_ms": execution_time,
-                "error_message": error_message,
-                "browser_logs": active_sessions[session_id]['logs'],
-                "screenshot_url": None,
-                "agent_steps": [],
-                "llm_provider": request.llm_provider,
-                "model": request.model
-            }
-            
-            supabase.table("benchmarks").insert(benchmark_data).execute()
-            await emit_log(session_id, "info", "💾 Failed benchmark saved to database")
-        except:
-            await emit_log(session_id, "error", "❌ Failed to save benchmark to database")
-    finally:
-        # Clear session from log handler
-        custom_handler.set_session_id(None)
+        await emit_log(session_identifier, "system", "success", f"🎉 All benchmarks completed! {successful_models}/{completed_models} models succeeded")
+        
+        # Update session status in database
+        await update_session_status_in_db(session_identifier, 'completed', completed_models, successful_models)
+        
+    except Exception as e:
+        await emit_log(session_identifier, "system", "error", f"💥 Benchmark system failed: {str(e)}")
+        
+        # Update session with error
+        active_sessions[session_identifier].update({
+            'status': 'failed',
+            'error_message': str(e)
+        })
 
 @app.get("/api/benchmark/stream/{session_id}")
 async def stream_benchmark_logs(session_id: str):
-    """Stream benchmark logs using Server-Sent Events."""
+    """Stream benchmark logs using Server-Sent Events for all models."""
     
     async def generate_logs():
         """Generate SSE data for logs."""
@@ -476,7 +446,7 @@ async def stream_benchmark_logs(session_id: str):
         
         while True:
             if session_id not in active_sessions:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'Session not found'})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Session not found'}, cls=DateTimeEncoder)}\n\n"
                 break
             
             session = active_sessions[session_id]
@@ -486,25 +456,27 @@ async def stream_benchmark_logs(session_id: str):
             if len(logs) > last_sent_count:
                 new_logs = logs[last_sent_count:]
                 for log in new_logs:
-                    yield f"data: {json.dumps({'type': 'log', 'data': log})}\n\n"
+                    yield f"data: {json.dumps({'type': 'log', 'data': log}, cls=DateTimeEncoder)}\n\n"
                 last_sent_count = len(logs)
             
             # Send status updates
             status = session.get('status', 'unknown')
-            yield f"data: {json.dumps({'type': 'status', 'status': status})}\n\n"
+            yield f"data: {json.dumps({'type': 'status', 'status': status}, cls=DateTimeEncoder)}\n\n"
             
             # Send completion data if finished
             if status in ['completed', 'failed']:
                 completion_data = {
                     'type': 'completion',
-                    'success': session.get('success', False),
-                    'execution_time_ms': session.get('execution_time_ms', 0),
-                    'benchmark_id': session.get('benchmark_id'),
-                    'screenshot_url': session.get('screenshot_url'),
-                    'created_at': session.get('created_at'),
+                    'status': status,
+                    'completed_models': session.get('completed_models', 0),
+                    'successful_models': session.get('successful_models', 0),
+                    'model_results': {
+                        model_id: result.model_dump() if hasattr(result, 'model_dump') else result.__dict__
+                        for model_id, result in session.get('model_results', {}).items()
+                    },
                     'error_message': session.get('error_message')
                 }
-                yield f"data: {json.dumps(completion_data)}\n\n"
+                yield f"data: {json.dumps(completion_data, cls=DateTimeEncoder)}\n\n"
                 
                 # Clean up session after a delay
                 asyncio.create_task(cleanup_session(session_id, 60))
@@ -522,181 +494,6 @@ async def stream_benchmark_logs(session_id: str):
         }
     )
 
-@app.post("/api/benchmark", response_model=Dict[str, Any])
-async def run_benchmark(request: BenchmarkRequest):
-    """Run a website benchmark using BrowserUse AI agent (legacy endpoint)."""
-    start_time = time.time()
-    
-    try:
-        # Get the appropriate LLM
-        llm = get_llm(request.llm_provider, request.model)
-        
-        # Create the BrowserUse agent with the specific task
-        task = f"Go to {request.website_url} and {request.task_description}"
-        
-        # Create a headless browser session
-        browser_session = BrowserSession(
-            headless=True,
-            viewport={'width': 1280, 'height': 720},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        )
-        
-        agent = Agent(
-            task=task,
-            llm=llm,
-            browser_session=browser_session,
-            use_vision=True,  # Enable vision for better web understanding
-            save_conversation_path=f"logs/conversation_{uuid.uuid4()}.json",
-            max_failures=3,
-            retry_delay=2,
-        )
-        
-        # Run the agent and capture results
-        result = await agent.run()
-        
-        execution_time = int((time.time() - start_time) * 1000)
-        
-        # Get the browser history and screenshots
-        browser_logs = []
-        screenshot_base64 = None
-        agent_steps = []
-        
-        # Extract information from the agent's history (safely)
-        if hasattr(agent, 'browser') and agent.browser:
-            # Get browser logs (if method exists)
-            if hasattr(agent.browser, 'get_logs'):
-                try:
-                    browser_logs = agent.browser.get_logs()
-                except Exception:
-                    pass
-            
-            # Take final screenshot (if method exists)
-            if hasattr(agent.browser, 'take_screenshot'):
-                try:
-                    screenshot_bytes = await agent.browser.take_screenshot()
-                    if screenshot_bytes:
-                        screenshot_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
-                except Exception:
-                    pass
-        
-        # Get agent execution steps (safely)
-        if hasattr(agent, 'history'):
-            try:
-                agent_steps = [
-                    {
-                        "step": i + 1,
-                        "action": step.get("action", ""),
-                        "result": step.get("result", ""),
-                        "timestamp": step.get("timestamp", "")
-                    }
-                    for i, step in enumerate(agent.history)
-                ]
-            except Exception:
-                pass
-        
-        # Determine success based on result
-        success = result is not None and not isinstance(result, Exception)
-        error_message = str(result) if isinstance(result, Exception) else None
-        
-        # Upload screenshot to Supabase if available
-        screenshot_url = None
-        if screenshot_base64:
-            try:
-                screenshot_id = str(uuid.uuid4())
-                file_name = f"screenshots/{screenshot_id}.png"
-                
-                # Convert base64 to bytes
-                screenshot_bytes = base64.b64decode(screenshot_base64)
-                
-                # Upload to Supabase storage
-                upload_result = supabase.storage.from_("benchmark-screenshots").upload(
-                    file_name, screenshot_bytes, {"content-type": "image/png"}
-                )
-                
-                # Handle upload result safely
-                if hasattr(upload_result, 'error') and not upload_result.error:
-                    # Get public URL
-                    public_url_response = supabase.storage.from_("benchmark-screenshots").get_public_url(file_name)
-                    # Handle different possible return types
-                    if isinstance(public_url_response, dict):
-                        screenshot_url = public_url_response.get("publicURL")
-                    else:
-                        screenshot_url = str(public_url_response)
-                    
-            except Exception as e:
-                print(f"Screenshot upload error: {e}")
-        
-        # Save benchmark result to database
-        benchmark_data = {
-            "user_id": request.user_id,
-            "website_url": request.website_url,
-            "task_description": request.task_description,
-            "success": success,
-            "execution_time_ms": execution_time,
-            "error_message": error_message,
-            "browser_logs": browser_logs,
-            "screenshot_url": screenshot_url,
-            "agent_steps": agent_steps,
-            "llm_provider": request.llm_provider,
-            "model": request.model
-        }
-        
-        db_result = supabase.table("benchmarks").insert(benchmark_data).execute()
-        
-        if db_result.data:
-            benchmark_id = db_result.data[0]["id"]
-            created_at = db_result.data[0]["created_at"]
-        else:
-            raise Exception("Failed to save benchmark to database")
-        
-        return {
-            "success": True,
-            "data": {
-                "id": benchmark_id,
-                "success": success,
-                "executionTimeMs": execution_time,
-                "errorMessage": error_message,
-                "screenshotUrl": screenshot_url,
-                "agentSteps": agent_steps,
-                "createdAt": created_at,
-                "llmProvider": request.llm_provider,
-                "model": request.model
-            }
-        }
-        
-    except Exception as e:
-        execution_time = int((time.time() - start_time) * 1000)
-        error_message = str(e)
-        
-        # Still try to save failed benchmark
-        try:
-            benchmark_data = {
-                "user_id": request.user_id,
-                "website_url": request.website_url,
-                "task_description": request.task_description,
-                "success": False,
-                "execution_time_ms": execution_time,
-                "error_message": error_message,
-                "browser_logs": [],
-                "screenshot_url": None,
-                "agent_steps": [],
-                "llm_provider": request.llm_provider,
-                "model": request.model
-            }
-            
-            supabase.table("benchmarks").insert(benchmark_data).execute()
-        except:
-            pass  # Don't fail if we can't save to DB
-        
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "Benchmark execution failed",
-                "message": error_message,
-                "executionTimeMs": execution_time
-            }
-        )
-
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
@@ -706,16 +503,8 @@ async def health_check():
 async def get_supported_models():
     """Get list of supported LLM models and providers."""
     return {
-        "providers": {
-            "openai": {
-                "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
-                "default": "gpt-4o"
-            },
-            "anthropic": {
-                "models": ["claude-3-5-sonnet-20241022", "claude-3-haiku-20240307", "claude-3-opus-20240229"],
-                "default": "claude-3-5-sonnet-20241022"
-            }
-        }
+        "models": MODELS_TO_RUN,
+        "provider": "openai"
     }
 
 if __name__ == "__main__":

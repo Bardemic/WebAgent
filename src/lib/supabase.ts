@@ -21,51 +21,113 @@ export type Json =
 export interface Database {
   public: {
     Tables: {
+      benchmark_sessions: {
+        Row: {
+          id: string
+          session_id: string
+          created_at: string
+          updated_at: string
+          user_id: string
+          website_url: string
+          task_description: string
+          status: 'running' | 'completed' | 'failed' | 'cancelled'
+          total_models: number
+          completed_models: number
+          successful_models: number
+          start_time: string
+          end_time: string | null
+        }
+        Insert: {
+          id?: string
+          session_id: string
+          created_at?: string
+          updated_at?: string
+          user_id: string
+          website_url: string
+          task_description: string
+          status?: 'running' | 'completed' | 'failed' | 'cancelled'
+          total_models?: number
+          completed_models?: number
+          successful_models?: number
+          start_time?: string
+          end_time?: string | null
+        }
+        Update: {
+          id?: string
+          session_id?: string
+          created_at?: string
+          updated_at?: string
+          user_id?: string
+          website_url?: string
+          task_description?: string
+          status?: 'running' | 'completed' | 'failed' | 'cancelled'
+          total_models?: number
+          completed_models?: number
+          successful_models?: number
+          start_time?: string
+          end_time?: string | null
+        }
+      }
       benchmarks: {
         Row: {
           id: string
           created_at: string
+          updated_at: string
           user_id: string
-          website_url: string
-          task_description: string
+          session_id: string
+          session_identifier: string
+          model_id: string
+          model_name: string
+          status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
           success: boolean
           execution_time_ms: number
+          start_time: string
+          end_time: string | null
           error_message: string | null
           browser_logs: Json | null
           screenshot_url: string | null
           agent_steps: Json | null
           llm_provider: string
-          model: string
         }
         Insert: {
           id?: string
           created_at?: string
+          updated_at?: string
           user_id: string
-          website_url: string
-          task_description: string
-          success: boolean
-          execution_time_ms: number
+          session_id: string
+          session_identifier: string
+          model_id: string
+          model_name: string
+          status?: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+          success?: boolean
+          execution_time_ms?: number
+          start_time?: string
+          end_time?: string | null
           error_message?: string | null
           browser_logs?: Json | null
           screenshot_url?: string | null
           agent_steps?: Json | null
           llm_provider?: string
-          model?: string
         }
         Update: {
           id?: string
           created_at?: string
+          updated_at?: string
           user_id?: string
-          website_url?: string
-          task_description?: string
+          session_id?: string
+          session_identifier?: string
+          model_id?: string
+          model_name?: string
+          status?: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
           success?: boolean
           execution_time_ms?: number
+          start_time?: string
+          end_time?: string | null
           error_message?: string | null
           browser_logs?: Json | null
           screenshot_url?: string | null
           agent_steps?: Json | null
           llm_provider?: string
-          model?: string
         }
       }
       profiles: {
@@ -93,7 +155,37 @@ export interface Database {
       }
     }
     Views: {
-      [_ in never]: never
+      benchmark_session_summary: {
+        Row: {
+          id: string
+          session_id: string
+          created_at: string
+          updated_at: string
+          user_id: string
+          website_url: string
+          task_description: string
+          status: 'running' | 'completed' | 'failed' | 'cancelled'
+          total_models: number
+          completed_models: number
+          successful_models: number
+          start_time: string
+          end_time: string | null
+          execution_time_ms: number
+          model_results: Json
+        }
+      }
+      benchmark_stats: {
+        Row: {
+          user_id: string
+          total_sessions: number
+          completed_sessions: number
+          failed_sessions: number
+          total_model_runs: number
+          total_successful_runs: number
+          avg_session_time_ms: number
+          unique_websites_tested: number
+        }
+      }
     }
     Functions: {
       [_ in never]: never

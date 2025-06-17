@@ -23,14 +23,16 @@ class CustomLogHandler(logging.Handler):
     def __init__(self):
         super().__init__()
         self.current_session_id: Optional[str] = None
+        self.current_model_id: Optional[str] = None
     
-    def set_session_id(self, session_id: Optional[str]):
-        """Set the current session ID for log forwarding."""
+    def set_session_info(self, session_id: Optional[str], model_id: Optional[str]):
+        """Set the current session and model ID for log forwarding."""
         self.current_session_id = session_id
+        self.current_model_id = model_id
     
     def emit(self, record):
         """Emit log record to the current session."""
-        if not self.current_session_id or self.current_session_id not in active_sessions:
+        if not self.current_session_id or self.current_session_id not in active_sessions or not self.current_model_id:
             return
         
         try:
@@ -53,20 +55,21 @@ class CustomLogHandler(logging.Handler):
             clean_message = re.sub(r'^\w+\s+\[.*?\]\s*', '', message)
             if clean_message:
                 # Create task to emit log (non-blocking)
-                asyncio.create_task(emit_log(self.current_session_id, level, clean_message))
+                asyncio.create_task(emit_log(self.current_session_id, self.current_model_id, level, clean_message))
                 
         except Exception as e:
             # Don't let logging errors break the application
             pass
 
-async def emit_log(session_id: str, level: str, message: str, data: Optional[Dict[str, Any]] = None):
-    """Emit a log entry to the active session."""
+async def emit_log(session_id: str, model_id: str, level: str, message: str, data: Optional[Dict[str, Any]] = None):
+    """Emit a log entry to the active session for a specific model."""
     if session_id in active_sessions:
         log_entry = LogEntry(
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
             level=level,
             message=message,
-            data=data
+            data=data,
+            model_id=model_id
         )
         
         # Add to session logs
