@@ -88,7 +88,12 @@ export function BrowserLogs({ sessionId, isActive, onStatusChange, onCompletion 
     }
   }, [sessionId, isActive, onStatusChange, onCompletion])
 
-  const getLogIcon = (level: string) => {
+  const getLogIcon = (level: string, message?: string) => {
+    // Special icon for final results
+    if (message?.includes('🎯 Final Result:')) {
+      return '🏆'
+    }
+    
     switch (level) {
       case 'success': return '✅'
       case 'error': return '❌'
@@ -176,39 +181,50 @@ export function BrowserLogs({ sessionId, isActive, onStatusChange, onCompletion 
             </div>
           </div>
         ) : (
-          logs.map((log, index) => (
-            <div 
-              key={index} 
-              className="flex items-start space-x-3 p-3 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors duration-200"
-            >
-              <span className="text-lg flex-shrink-0 mt-0.5">
-                {getLogIcon(log.level)}
-              </span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center space-x-2 mb-1">
-                  <span className={`text-sm font-medium ${getLogColor(log.level)}`}>
-                    {log.level.toUpperCase()}
-                  </span>
-                  <span className="text-xs text-gray-400">
-                    {log.timestamp}
-                  </span>
+          logs.map((log, index) => {
+            const isFinalResult = log.message?.includes('🎯 Final Result:')
+            return (
+              <div 
+                key={index} 
+                className={`flex items-start space-x-3 p-3 rounded-xl transition-colors duration-200 ${
+                  isFinalResult 
+                    ? 'bg-gradient-to-r from-green-50 to-blue-50 border border-green-200 hover:from-green-100 hover:to-blue-100' 
+                    : 'bg-gray-50 hover:bg-gray-100'
+                }`}
+              >
+                <span className="text-lg flex-shrink-0 mt-0.5">
+                  {getLogIcon(log.level, log.message)}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center space-x-2 mb-1">
+                    <span className={`text-sm font-medium ${
+                      isFinalResult ? 'text-green-700' : getLogColor(log.level)
+                    }`}>
+                      {isFinalResult ? 'FINAL RESULT' : log.level.toUpperCase()}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {log.timestamp}
+                    </span>
+                  </div>
+                  <p className={`text-sm leading-relaxed ${
+                    isFinalResult ? 'text-gray-800 font-medium' : 'text-gray-700'
+                  }`}>
+                    {isFinalResult ? log.message.replace('🎯 Final Result: ', '') : log.message}
+                  </p>
+                  {log.data && (
+                    <details className="mt-2">
+                      <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
+                        View data
+                      </summary>
+                      <pre className="mt-1 text-xs text-gray-600 bg-white p-2 rounded border overflow-x-auto">
+                        {JSON.stringify(log.data, null, 2)}
+                      </pre>
+                    </details>
+                  )}
                 </div>
-                <p className="text-sm text-gray-700 leading-relaxed">
-                  {log.message}
-                </p>
-                {log.data && (
-                  <details className="mt-2">
-                    <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
-                      View data
-                    </summary>
-                    <pre className="mt-1 text-xs text-gray-600 bg-white p-2 rounded border overflow-x-auto">
-                      {JSON.stringify(log.data, null, 2)}
-                    </pre>
-                  </details>
-                )}
               </div>
-            </div>
-          ))
+            )
+          })
         )}
         <div ref={logsEndRef} />
       </div>
