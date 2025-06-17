@@ -215,12 +215,20 @@ def patch_agent_methods(agent: CustomAgent):
 
 def get_llm(provider: str, model: str):
     """Get the appropriate LLM based on provider and model."""
-    if provider.lower() == "openai" or True:
+    if provider.lower() == "openai":
         return ChatOpenAI(
             model=model,
             api_key=os.getenv("OPENAI_API_KEY"),
             temperature=0
         )
+    elif provider.lower() == "anthropic":
+        return ChatAnthropic(
+            model=model,
+            api_key=os.getenv("ANTHROPIC_API_KEY"),
+            temperature=0
+        )
+    else:
+        raise ValueError(f"Unsupported LLM provider: {provider}")
 
 async def cleanup_session(session_id: str, delay: int = 60):
     """Clean up session after delay."""
