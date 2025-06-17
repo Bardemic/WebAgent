@@ -196,16 +196,6 @@ export function BenchmarkResults({ benchmarks, loading }: BenchmarkResultsProps)
                 </div>
 
                 <div className="space-y-4">
-                  {selectedBenchmark.screenshot_url && (
-                    <div>
-                      <h4 className="text-sm font-medium text-gray-700 mb-2">Screenshot</h4>
-                      <img
-                        src={selectedBenchmark.screenshot_url}
-                        alt="Benchmark screenshot"
-                        className="w-full rounded border border-gray-200"
-                      />
-                    </div>
-                  )}
 
                   {selectedBenchmark.browser_logs && (
                     <div>

@@ -36,8 +36,8 @@ export type Benchmark = {
   end_time?: string
   error_message?: string
   browser_logs?: any[]
-  screenshot_url?: string
   agent_steps?: any[]
+  final_result?: string
   llm_provider: string
   created_at: string
   updated_at: string
@@ -50,7 +50,7 @@ export type ModelResult = {
   success: boolean
   execution_time_ms: number
   error_message?: string
-  screenshot_url?: string
+  final_result?: string
   benchmark_id?: string
   start_time?: string
   end_time?: string
@@ -116,8 +116,8 @@ class DatabaseService {
         start_time: benchmarkData.start_time || new Date().toISOString(),
         error_message: benchmarkData.error_message,
         browser_logs: benchmarkData.browser_logs,
-        screenshot_url: benchmarkData.screenshot_url,
         agent_steps: benchmarkData.agent_steps,
+        final_result: benchmarkData.final_result,
         llm_provider: benchmarkData.llm_provider
       })
       .select('id')
@@ -135,8 +135,8 @@ class DatabaseService {
       execution_time_ms?: number
       error_message?: string
       browser_logs?: any[]
-      screenshot_url?: string
       agent_steps?: any[]
+      final_result?: string
     }
   ): Promise<void> {
     const updateData: any = {
@@ -224,7 +224,6 @@ class DatabaseService {
       success: benchmark.success,
       execution_time_ms: benchmark.execution_time_ms,
       error_message: benchmark.error_message,
-      screenshot_url: benchmark.screenshot_url,
       benchmark_id: benchmark.id,
       start_time: benchmark.start_time,
       end_time: benchmark.end_time
@@ -286,7 +285,6 @@ class DatabaseService {
         success: benchmark.success,
         execution_time_ms: benchmark.execution_time_ms,
         error_message: benchmark.error_message,
-        screenshot_url: benchmark.screenshot_url,
         benchmark_id: benchmark.id,
         start_time: benchmark.start_time,
         end_time: benchmark.end_time

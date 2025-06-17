@@ -8,6 +8,14 @@ export async function GET(
 ) {
   const { sessionId } = await params
 
+  // Get the AbortController to handle client disconnection
+  const abortController = new AbortController()
+  
+  // Handle client disconnect
+  request.signal.addEventListener('abort', () => {
+    abortController.abort()
+  })
+
   try {
     // Create a fetch request to the Python backend SSE endpoint
     const response = await fetch(`${PYTHON_API_URL}/api/benchmark/stream/${sessionId}`, {
@@ -15,6 +23,7 @@ export async function GET(
         'Accept': 'text/event-stream',
         'Cache-Control': 'no-cache',
       },
+      signal: abortController.signal,
     })
 
     if (!response.ok) {
@@ -37,18 +46,47 @@ export async function GET(
         const pump = async () => {
           try {
             while (true) {
-              const { done, value } = await reader.read()
-              
-              if (done) {
-                controller.close()
+              // Check if client disconnected
+              if (abortController.signal.aborted) {
                 break
               }
               
-              controller.enqueue(value)
+              const { done, value } = await reader.read()
+              
+              if (done) {
+                if (controller.desiredSize !== null) {
+                  controller.close()
+                }
+                break
+              }
+              
+              // Check if controller is still open before enqueueing
+              if (controller.desiredSize !== null) {
+                controller.enqueue(value)
+              } else {
+                // Controller is closed, stop the pump
+                break
+              }
             }
           } catch (error) {
-            console.error('SSE proxy error:', error)
-            controller.error(error)
+            // Don't log abort errors as they're expected when client disconnects
+            if (error instanceof Error && error.name !== 'AbortError') {
+              console.error('SSE proxy error:', error)
+            } else if (!(error instanceof Error)) {
+              console.error('SSE proxy error:', error)
+            }
+            
+            // Only call error if controller is still open and it's not an abort
+            if (controller.desiredSize !== null && !(error instanceof Error && error.name === 'AbortError')) {
+              controller.error(error)
+            }
+          } finally {
+            // Clean up the reader
+            try {
+              reader.releaseLock()
+            } catch (e) {
+              // Ignore errors when releasing lock
+            }
           }
         }
 

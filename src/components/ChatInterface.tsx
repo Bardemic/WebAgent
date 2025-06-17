@@ -112,7 +112,6 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
             success: benchmark.success,
             executionTimeMs: benchmark.execution_time_ms,
             createdAt: benchmark.created_at,
-            screenshotUrl: benchmark.screenshot_url
           }
         }
       })
@@ -363,7 +362,6 @@ export function ChatInterface({ user, onBenchmarkComplete, selectedBenchmark, on
         success: data.success,
         executionTimeMs: data.execution_time_ms,
         errorMessage: data.error_message,
-        screenshotUrl: data.screenshot_url,
         createdAt: data.created_at,
         llmProvider: llmProvider,
         model: model

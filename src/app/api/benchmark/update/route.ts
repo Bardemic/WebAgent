@@ -11,8 +11,8 @@ export async function POST(request: NextRequest) {
       execution_time_ms, 
       error_message, 
       browser_logs, 
-      screenshot_url, 
-      agent_steps 
+      agent_steps,
+      final_result
     } = body
 
     if (!benchmark_id || !status) {
@@ -28,8 +28,8 @@ export async function POST(request: NextRequest) {
       execution_time_ms,
       error_message,
       browser_logs,
-      screenshot_url,
-      agent_steps
+      agent_steps,
+      final_result
     })
 
     return NextResponse.json({

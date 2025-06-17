@@ -2,7 +2,6 @@ import asyncio
 import os
 import time
 import json
-import base64
 import httpx
 from typing import Dict, Any, List
 from fastapi import FastAPI, HTTPException, Query
@@ -30,7 +29,7 @@ load_dotenv()
 # Next.js API URL
 NEXTJS_API_URL = os.getenv('NEXTJS_API_URL', 'http://localhost:3000')
 
-async def update_benchmark_in_db(session_identifier: str, model_id: str, status: str, success: bool, execution_time_ms: int, error_message: str = None, screenshot_url: str = None):
+async def update_benchmark_in_db(session_identifier: str, model_id: str, status: str, success: bool, execution_time_ms: int, error_message: str = None, final_result: str = None):
     """Update benchmark status in the database via Next.js API."""
     try:
         async with httpx.AsyncClient() as client:
@@ -58,7 +57,7 @@ async def update_benchmark_in_db(session_identifier: str, model_id: str, status:
                 'success': success,
                 'execution_time_ms': execution_time_ms,
                 'error_message': error_message,
-                'screenshot_url': screenshot_url
+                'final_result': final_result
             })
             
             if update_response.status_code == 200:
@@ -208,7 +207,7 @@ async def run_single_model_benchmark(session_identifier: str, model_info: Dict[s
         await emit_log(session_identifier, model_id, "info", f"🤖 Starting {model_name}")
         
         # Update database: mark as running
-        await update_benchmark_in_db(session_identifier, model_id, "running", False, 0)
+        await update_benchmark_in_db(session_identifier, model_id, "running", False, 0, None, None)
         
         # Get the appropriate LLM
         llm = get_llm("openai", model_id)
@@ -245,35 +244,23 @@ async def run_single_model_benchmark(session_identifier: str, model_info: Dict[s
         
         execution_time = int((time.time() - start_time) * 1000)
         
-        # Log the final result from the agent
+        # Extract and process the final result from the agent
+        final_result_text = None
         if result:
             if isinstance(result, str):
+                final_result_text = result
                 await emit_log(session_identifier, model_id, "success", f"🎯 Final Result: {result}")
             elif hasattr(result, 'message') or hasattr(result, 'content'):
                 # Handle different result object types
-                final_message = getattr(result, 'message', getattr(result, 'content', str(result)))
-                await emit_log(session_identifier, model_id, "success", f"🎯 Final Result: {final_message}")
+                final_result_text = getattr(result, 'message', getattr(result, 'content', str(result)))
+                await emit_log(session_identifier, model_id, "success", f"🎯 Final Result: {final_result_text}")
             else:
-                await emit_log(session_identifier, model_id, "success", f"🎯 Final Result: {str(result)}")
+                final_result_text = str(result)
+                await emit_log(session_identifier, model_id, "success", f"🎯 Final Result: {final_result_text}")
         else:
             await emit_log(session_identifier, model_id, "warning", "⚠️ No final result returned from agent")
         
-        # Get screenshot
-        screenshot_base64 = None
-        
-        await emit_log(session_identifier, model_id, "info", "📸 Capturing final screenshot...")
-        
-        # Extract information from the agent (safely handling potential missing attributes)
-        if hasattr(agent, 'browser') and agent.browser:
-            # Take final screenshot (if method exists)
-            if hasattr(agent.browser, 'take_screenshot'):
-                try:
-                    screenshot_bytes = await agent.browser.take_screenshot()
-                    if screenshot_bytes:
-                        screenshot_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
-                        await emit_log(session_identifier, model_id, "success", "✅ Screenshot captured!")
-                except Exception:
-                    await emit_log(session_identifier, model_id, "warning", "⚠️ Could not capture screenshot")
+
         
         # Determine success based on result
         success = result is not None and not isinstance(result, Exception)
@@ -289,7 +276,7 @@ async def run_single_model_benchmark(session_identifier: str, model_info: Dict[s
             success, 
             execution_time, 
             error_message, 
-            f"data:image/png;base64,{screenshot_base64}" if screenshot_base64 else None
+            final_result_text
         )
         
         return ModelResult(
@@ -299,7 +286,6 @@ async def run_single_model_benchmark(session_identifier: str, model_info: Dict[s
             success=success,
             execution_time_ms=execution_time,
             error_message=error_message,
-            screenshot_url=screenshot_base64,  # Return base64 directly for Next.js to handle
             start_time=datetime.utcnow(),
             end_time=datetime.utcnow()
         )
@@ -317,7 +303,8 @@ async def run_single_model_benchmark(session_identifier: str, model_info: Dict[s
             "failed", 
             False, 
             execution_time, 
-            error_message
+            error_message,
+            None   # final_result
         )
         
         return ModelResult(
@@ -327,7 +314,6 @@ async def run_single_model_benchmark(session_identifier: str, model_info: Dict[s
             success=False,
             execution_time_ms=execution_time,
             error_message=error_message,
-            screenshot_url=None,
             start_time=datetime.utcnow(),
             end_time=datetime.utcnow()
         )
@@ -404,7 +390,6 @@ async def run_all_models_benchmark(request: BenchmarkStreamRequest):
                     success=False,
                     execution_time_ms=0,
                     error_message=str(result),
-                    screenshot_url=None,
                     start_time=datetime.utcnow(),
                     end_time=datetime.utcnow()
                 )

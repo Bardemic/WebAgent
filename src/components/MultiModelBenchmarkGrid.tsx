@@ -235,16 +235,6 @@ export function MultiModelBenchmarkGrid({ sessionId, isActive, onStatusChange, o
                 {modelResult.execution_time_ms}ms
               </span>
             </div>
-            {modelResult.screenshot_url && (
-              <div className="mt-2">
-                <img 
-                  src={modelResult.screenshot_url} 
-                  alt={`${model.name} screenshot`}
-                  className="w-full h-16 object-cover rounded border"
-                  loading="lazy"
-                />
-              </div>
-            )}
           </div>
         )}
       </div>

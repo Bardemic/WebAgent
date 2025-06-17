@@ -85,7 +85,7 @@ export interface Database {
           end_time: string | null
           error_message: string | null
           browser_logs: Json | null
-          screenshot_url: string | null
+
           agent_steps: Json | null
           llm_provider: string
         }

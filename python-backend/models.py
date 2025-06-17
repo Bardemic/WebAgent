@@ -39,7 +39,6 @@ class ModelResult(BaseModel):
     success: bool
     execution_time_ms: int
     error_message: Optional[str] = None
-    screenshot_url: Optional[str] = None
     start_time: datetime
     end_time: datetime
 
